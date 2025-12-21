@@ -8,8 +8,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY shared/ ./shared/
-COPY trader/ ./trader/
 COPY registry/ ./registry/
+COPY app/ ./trader/app/
+COPY __init__.py ./trader/__init__.py
 
 # Set Python path
 ENV PYTHONPATH=/app
