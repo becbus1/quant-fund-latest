@@ -6,9 +6,14 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
+# Copy shared module (now inside trader/ build context)
 COPY shared/ ./shared/
-COPY trader/ ./trader/
+
+# Copy trader module (app/ and __init__.py from build context)
+COPY __init__.py ./trader/__init__.py
+COPY app/ ./trader/app/
+
+# Copy registry (now inside trader/ build context)
 COPY registry/ ./registry/
 
 # Set Python path
