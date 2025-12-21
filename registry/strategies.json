@@ -1,4 +1,22 @@
 {
-  "updated_at": "2025-01-01T00:00:00",
-  "strategies": []
+  "updated_at": "2025-12-21T00:00:00",
+  "strategies": [
+    {
+      "name": "smoke_test_time_exit",
+      "enabled": true,
+      "symbol": "BTCUSDT",
+      "entry": {
+        "type": "market"
+      },
+      "exit": {
+        "type": "time",
+        "seconds": 15
+      },
+      "parameters": {},
+      "expected_metrics": {
+        "purpose": "infra_test_only"
+      },
+      "expires_at": "2025-12-22T00:00:00"
+    }
+  ]
 }
