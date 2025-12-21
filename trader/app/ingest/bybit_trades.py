@@ -172,9 +172,18 @@ class BybitTradeIngester:
                 # Add to buffer
                 self._trade_buffer.append(trade_obj)
 
-                # Call trade callback if set
-                if self.on_trade:
-                    self.on_trade(trade_obj)
+               # Call trade callback if set (ISOLATED — never allow exceptions to escape)
+if self.on_trade:
+    try:
+        # IMPORTANT:
+        # - trade_obj is a PURE DATACLASS (TradeData)
+        # - NO ORM objects may ever be passed downstream
+        self.on_trade(trade_obj)
+    except Exception as e:
+        # Never let strategy / executor errors kill ingestion
+        logger.error(
+            "on_trade callback error (ignored to protect ingestion): %s", e
+        )
 
                 # Flush buffer if full
                 if len(self._trade_buffer) >= self._buffer_size:
