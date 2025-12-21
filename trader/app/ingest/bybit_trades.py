@@ -172,9 +172,9 @@ class BybitTradeIngester:
                 # Add to buffer
                 self._trade_buffer.append(trade_obj)
 
-    # Call trade callback if set
-if self.on_trade:
-    self.on_trade(trade_obj)
+                # Call trade callback if set
+                if self.on_trade:
+                    self.on_trade(trade_obj)
 
                 # Flush buffer if full
                 if len(self._trade_buffer) >= self._buffer_size:
