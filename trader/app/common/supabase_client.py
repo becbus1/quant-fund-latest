@@ -2,11 +2,16 @@ import os
 import requests
 from typing import Dict, Any
 
+from supabase import create_client  # ✅ ADDED
+
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY")
 
 if not SUPABASE_URL or not SUPABASE_ANON_KEY:
     raise RuntimeError("Supabase environment variables not set")
+
+# ✅ EXPORT SUPABASE CLIENT (for dashboard + future use)
+supabase = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
 
 _HEADERS = {
     "apikey": SUPABASE_ANON_KEY,
