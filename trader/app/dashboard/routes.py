@@ -1,8 +1,5 @@
 from fastapi import APIRouter
-from sqlalchemy import func
-
-from trader.app.common.db import get_db_session
-from trader.app.common.models import PnL, SignalLog, Position
+from trader.app.common.supabase_client import supabase
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
@@ -14,63 +11,71 @@ def health():
 
 @router.get("/pnl")
 def pnl_summary():
-    with get_db_session() as db:
-        rows = (
-            db.query(
-                func.date(PnL.timestamp).label("date"),
-                func.sum(PnL.net_pnl).label("net_pnl"),
-                func.count().label("trades"),
-            )
-            .group_by(func.date(PnL.timestamp))
-            .order_by(func.date(PnL.timestamp))
-            .all()
-        )
+    """
+    Aggregate PnL by date from Supabase.
+    """
+    resp = (
+        supabase
+        .table("pnl")
+        .select("timestamp, net_pnl")
+        .order("timestamp")
+        .execute()
+    )
 
-        return [
-            {
-                "date": r.date,
-                "net_pnl": float(r.net_pnl),
-                "trades": r.trades,
-            }
-            for r in rows
-        ]
+    rows = resp.data or []
+
+    summary = {}
+    for r in rows:
+        date = r["timestamp"][:10]  # YYYY-MM-DD
+        summary.setdefault(date, {"net_pnl": 0.0, "trades": 0})
+        summary[date]["net_pnl"] += float(r["net_pnl"])
+        summary[date]["trades"] += 1
+
+    return [
+        {
+            "date": d,
+            "net_pnl": round(v["net_pnl"], 4),
+            "trades": v["trades"],
+        }
+        for d, v in sorted(summary.items())
+    ]
 
 
 @router.get("/signals")
 def signals(limit: int = 100):
-    with get_db_session() as db:
-        rows = (
-            db.query(SignalLog)
-            .order_by(SignalLog.timestamp.desc())
-            .limit(limit)
-            .all()
-        )
+    resp = (
+        supabase
+        .table("signal_logs")
+        .select("symbol, strategy, z_score, entry_price, timestamp")
+        .order("timestamp", desc=True)
+        .limit(limit)
+        .execute()
+    )
 
-        return [
-            {
-                "symbol": s.symbol,
-                "strategy": s.strategy,
-                "z_score": s.z_score,
-                "entry_price": s.entry_price,
-                "timestamp": s.timestamp,
-            }
-            for s in rows
-        ]
+    return resp.data or []
 
 
 @router.get("/positions")
 def positions():
-    with get_db_session() as db:
-        rows = db.query(Position).all()
+    resp = (
+        supabase
+        .table("positions")
+        .select(
+            "symbol, side, quantity, entry_price, strategy_name, status"
+        )
+        .execute()
+    )
 
-        return [
-            {
-                "symbol": p.symbol,
-                "side": p.side.value,
-                "qty": p.quantity,
-                "entry_price": p.entry_price,
-                "strategy": p.strategy_name,
-                "status": p.status.value,
-            }
-            for p in rows
-        ]
+    rows = resp.data or []
+
+    return [
+        {
+            "symbol": p["symbol"],
+            "side": p["side"],
+            "qty": p["quantity"],
+            "entry_price": p["entry_price"],
+            "strategy": p["strategy_name"],
+            "status": p["status"],
+        }
+        for p in rows
+    ]
