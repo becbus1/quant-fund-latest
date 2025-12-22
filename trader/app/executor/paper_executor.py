@@ -82,6 +82,35 @@ class PaperExecutor:
                 "strategy_name": position.strategy_name,
             }
 
+    # ✅✅✅ THIS WAS THE ONLY MISSING METHOD
+    def get_all_position_snapshots(self) -> List[dict]:
+        """
+        Return SAFE snapshots of all open positions.
+        Never returns ORM objects.
+        """
+        snapshots = []
+
+        with get_db_session() as db:
+            for symbol, position_id in self._positions.items():
+                position = db.query(Position).get(position_id)
+                if not position:
+                    continue
+
+                snapshots.append(
+                    {
+                        "symbol": position.symbol,
+                        "side": position.side,
+                        "quantity": position.quantity,
+                        "entry_price": position.entry_price,
+                        "take_profit_price": position.take_profit_price,
+                        "stop_loss_price": position.stop_loss_price,
+                        "entry_time": position.entry_time,
+                        "strategy_name": position.strategy_name,
+                    }
+                )
+
+        return snapshots
+
     def execute_entry(
         self,
         symbol: str,
