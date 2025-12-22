@@ -1,6 +1,0 @@
-[build]
-builder = "Dockerfile"
-
-[deploy]
-startCommand = ""
-numReplicas = 1
