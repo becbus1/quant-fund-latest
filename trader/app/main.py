@@ -206,10 +206,10 @@ def on_trade_received(trade: TradeData) -> None:
         if not should_enter:
             continue
 
-        # Risk check
+        # Risk check  ✅ FIXED LINE
         allowed, reason = risk_manager.can_open_position(
             trade.symbol,
-            len(executor.get_all_positions()),
+            len(executor.get_all_position_snapshots()),
         )
 
         if not allowed:
