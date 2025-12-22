@@ -1,43 +1,75 @@
 import pandas as pd
-from sqlalchemy.orm import Session
 
-from trader.app.common.models import SignalLog, PnL
+from trader.app.common.supabase_client import supabase
 
 
-def load_dashboard_dataframe(db: Session) -> pd.DataFrame:
-    rows = (
-        db.query(
-            SignalLog.signal_id,
-            SignalLog.symbol,
-            SignalLog.strategy,
-            SignalLog.z_score,
-            SignalLog.features,
-            PnL.pnl_bps,
-            PnL.net_pnl,
+def load_dashboard_dataframe() -> pd.DataFrame:
+    """
+    Load joined SignalLog + PnL data from Supabase
+    and return as a pandas DataFrame.
+    """
+
+    # Fetch signals
+    signals_resp = (
+        supabase
+        .table("signal_logs")
+        .select(
+            "signal_id, symbol, strategy, z_score, features, timestamp"
         )
-        .join(
-            PnL,
-            (PnL.symbol == SignalLog.symbol)
-            & (PnL.strategy_name == SignalLog.strategy)
-            & (PnL.timestamp >= SignalLog.timestamp),
-        )
-        .all()
+        .execute()
     )
 
-    if not rows:
+    # Fetch PnL
+    pnl_resp = (
+        supabase
+        .table("pnl")
+        .select(
+            "symbol, strategy_name, pnl_bps, net_pnl, timestamp"
+        )
+        .execute()
+    )
+
+    signals = signals_resp.data or []
+    pnls = pnl_resp.data or []
+
+    if not signals or not pnls:
+        return pd.DataFrame()
+
+    pnl_df = pd.DataFrame(pnls)
+    signal_df = pd.DataFrame(signals)
+
+    # Normalize timestamps
+    pnl_df["timestamp"] = pd.to_datetime(pnl_df["timestamp"])
+    signal_df["timestamp"] = pd.to_datetime(signal_df["timestamp"])
+
+    # Join logic (equivalent to SQLAlchemy join)
+    merged = signal_df.merge(
+        pnl_df,
+        left_on=["symbol", "strategy"],
+        right_on=["symbol", "strategy_name"],
+        suffixes=("", "_pnl"),
+    )
+
+    # Only keep PnL that happened AFTER the signal
+    merged = merged[
+        merged["timestamp_pnl"] >= merged["timestamp"]
+    ]
+
+    if merged.empty:
         return pd.DataFrame()
 
     records = []
-    for r in rows:
+    for _, r in merged.iterrows():
         rec = {
-            "signal_id": r.signal_id,
-            "symbol": r.symbol,
-            "strategy": r.strategy,
-            "z_score": r.z_score,
-            "pnl_bps": r.pnl_bps,
-            "net_pnl": r.net_pnl,
+            "signal_id": r["signal_id"],
+            "symbol": r["symbol"],
+            "strategy": r["strategy"],
+            "z_score": r["z_score"],
+            "pnl_bps": r["pnl_bps"],
+            "net_pnl": r["net_pnl"],
         }
-        rec.update(r.features)
+        if isinstance(r["features"], dict):
+            rec.update(r["features"])
         records.append(rec)
 
     return pd.DataFrame(records)
@@ -68,7 +100,8 @@ def compute_metrics(df: pd.DataFrame) -> dict:
             .to_dict()
         ),
         "trades_by_bucket": (
-            df["p_win_bucket"].value_counts()
+            df["p_win_bucket"]
+            .value_counts()
             .sort_index()
             .to_dict()
         ),
