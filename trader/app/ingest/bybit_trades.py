@@ -178,40 +178,20 @@ class BybitTradeIngester:
                 logger.error(f"Error parsing trade: {e}")
 
     async def _flush_buffer(self) -> None:
-        """Flush trade buffer to database."""
+        """Flush trade buffer (DISABLED — Supabase-only mode)."""
         if not self._trade_buffer:
             return
 
-        trades_to_insert = self._trade_buffer.copy()
+        flushed_count = len(self._trade_buffer)
         self._trade_buffer.clear()
         self._last_flush = datetime.utcnow()
 
-        try:
-            with get_db_session() as db:
-                for trade_data in trades_to_insert:
-                    existing = (
-                        db.query(Trade)
-                        .filter(Trade.trade_id == trade_data.trade_id)
-                        .first()
-                    )
-                    if existing:
-                        continue
+        logger.info(
+            f"Skipping trade DB flush (Supabase-only mode). "
+            f"Dropped {flushed_count} buffered trades."
+        )
 
-                    trade = Trade(
-                        timestamp=trade_data.timestamp,
-                        symbol=trade_data.symbol,
-                        price=trade_data.price,
-                        quantity=trade_data.quantity,
-                        side=trade_data.side,
-                        trade_id=trade_data.trade_id,
-                    )
-                    db.add(trade)
-
-            logger.debug(f"Flushed {len(trades_to_insert)} trades to database")
-
-        except Exception as e:
-            logger.error(f"Failed to flush trades to database: {e}")
-            self._trade_buffer.extend(trades_to_insert)
+        return
 
     def get_recent_trades(
         self, symbol: str, limit: int = 1000
