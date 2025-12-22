@@ -8,19 +8,15 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
-from sqlalchemy.exc import IntegrityError
-
 from trader.app.common.config import get_config
-from trader.app.common.db import get_db_session
-from trader.app.common.models import Order, Fill, PnL, Position
-from trader.app.common.supabase_client import insert_row  # ✅ ADDED
-from shared.schemas import Side, OrderStatus, PositionStatus
+from trader.app.common.supabase_client import insert_row
+from shared.schemas import Side
 
 logger = logging.getLogger(__name__)
 
 
 class PaperExecutor:
-    """Paper trading execution engine."""
+    """Paper trading execution engine (Supabase-only mode)."""
 
     def __init__(self):
         config = get_config()
@@ -29,90 +25,18 @@ class PaperExecutor:
         self.slippage_bps = config.slippage_bps
         self.time_stop_sec = config.time_stop_sec
 
-        # Store ONLY position IDs (never ORM objects)
-        self._positions: Dict[str, int] = {}
-        logger.info("Skipping DB-backed position loading (Supabase-only mode)")
-
-    def _load_positions(self) -> None:
-        """Load open positions from database."""
-        with get_db_session() as db:
-            open_positions = (
-                db.query(Position)
-                .filter(Position.status == PositionStatus.OPEN)
-                .all()
-            )
-            for pos in open_positions:
-                self._positions[pos.symbol] = pos.id
-
-            logger.info(f"Loaded {len(self._positions)} open positions")
+        # In-memory positions only
+        self._positions: Dict[str, dict] = {}
+        logger.info("Running in Supabase-only mode (no SQLAlchemy, no DB positions)")
 
     def has_position(self, symbol: str) -> bool:
-        """Check if there's an open position for symbol."""
         return symbol in self._positions
 
-    # ⚠️ SAFE but should NOT be used by strategy code
-    def get_position(self, symbol: str) -> Optional[Position]:
-        position_id = self._positions.get(symbol)
-        if not position_id:
-            return None
-
-        with get_db_session() as db:
-            return db.query(Position).get(position_id)
-
-    # ✅ THIS IS WHAT STRATEGIES MUST USE
     def get_position_snapshot(self, symbol: str) -> Optional[dict]:
-        """
-        Return a SAFE, session-free snapshot of a position.
-        This is the ONLY thing strategies should ever use.
-        """
-        position_id = self._positions.get(symbol)
-        if not position_id:
-            return None
+        return self._positions.get(symbol)
 
-        with get_db_session() as db:
-            position = db.query(Position).get(position_id)
-            if not position:
-                return None
-
-            return {
-                "symbol": position.symbol,
-                "side": position.side,
-                "quantity": position.quantity,
-                "entry_price": position.entry_price,
-                "take_profit_price": position.take_profit_price,
-                "stop_loss_price": position.stop_loss_price,
-                "entry_time": position.entry_time,
-                "strategy_name": position.strategy_name,
-            }
-
-    # ✅✅✅ THIS WAS THE ONLY MISSING METHOD
     def get_all_position_snapshots(self) -> List[dict]:
-        """
-        Return SAFE snapshots of all open positions.
-        Never returns ORM objects.
-        """
-        snapshots = []
-
-        with get_db_session() as db:
-            for symbol, position_id in self._positions.items():
-                position = db.query(Position).get(position_id)
-                if not position:
-                    continue
-
-                snapshots.append(
-                    {
-                        "symbol": position.symbol,
-                        "side": position.side,
-                        "quantity": position.quantity,
-                        "entry_price": position.entry_price,
-                        "take_profit_price": position.take_profit_price,
-                        "stop_loss_price": position.stop_loss_price,
-                        "entry_time": position.entry_time,
-                        "strategy_name": position.strategy_name,
-                    }
-                )
-
-        return snapshots
+        return list(self._positions.values())
 
     def execute_entry(
         self,
@@ -122,16 +46,12 @@ class PaperExecutor:
         strategy_name: str,
         take_profit_bps: float,
         stop_loss_bps: float,
-    ) -> Optional[Fill]:
-        """
-        Execute entry order with simulated fill.
-        Returns fill if successful, None if rejected.
-        """
+    ) -> Optional[dict]:
         if self.has_position(symbol):
             logger.warning(f"Already have position in {symbol}, rejecting entry")
             return None
 
-        # ✅ INSERT SIGNAL (Supabase only — no SQLAlchemy)
+        # Log signal to Supabase
         signal_id = uuid.uuid4()
         insert_row(
             "signal_logs",
@@ -152,8 +72,6 @@ class PaperExecutor:
         notional = fill_price * quantity
         fee = notional * (self.fees_bps / 10000)
 
-        order_id = f"ORD-{uuid.uuid4().hex[:12]}"
-        fill_id = f"FILL-{uuid.uuid4().hex[:12]}"
         now = datetime.utcnow()
 
         if side == Side.BUY:
@@ -165,182 +83,114 @@ class PaperExecutor:
 
         time_stop_at = now + timedelta(seconds=self.time_stop_sec)
 
-        try:
-            with get_db_session() as db:
-                order = Order(
-                    order_id=order_id,
-                    timestamp=now,
-                    symbol=symbol,
-                    side=side,
-                    quantity=quantity,
-                    price=price,
-                    notional=notional,
-                    status=OrderStatus.FILLED,
-                    strategy_name=strategy_name,
-                )
-                db.add(order)
+        position = {
+            "symbol": symbol,
+            "side": side,
+            "quantity": quantity,
+            "entry_price": fill_price,
+            "notional": notional,
+            "entry_time": now,
+            "strategy_name": strategy_name,
+            "take_profit_price": take_profit_price,
+            "stop_loss_price": stop_loss_price,
+            "time_stop_at": time_stop_at,
+            "fees_paid": fee,
+        }
 
-                fill = Fill(
-                    fill_id=fill_id,
-                    order_id=order_id,
-                    timestamp=now,
-                    symbol=symbol,
-                    side=side,
-                    quantity=quantity,
-                    price=fill_price,
-                    notional=notional,
-                    fee=fee,
-                    slippage=abs(fill_price - price) * quantity,
-                )
-                db.add(fill)
+        self._positions[symbol] = position
 
-                position = Position(
-                    symbol=symbol,
-                    side=side,
-                    quantity=quantity,
-                    entry_price=fill_price,
-                    notional=notional,
-                    entry_time=now,
-                    strategy_name=strategy_name,
-                    status=PositionStatus.OPEN,
-                    take_profit_price=take_profit_price,
-                    stop_loss_price=stop_loss_price,
-                    time_stop_at=time_stop_at,
-                )
-                db.add(position)
-                db.flush()
+        logger.info(
+            f"Entry fill: {side.value} {quantity:.6f} {symbol} @ {fill_price:.4f}"
+        )
 
-                # ✅ store ID only
-                self._positions[symbol] = position.id
-
-                logger.info(
-                    f"Entry fill: {side.value} {quantity:.6f} {symbol} @ {fill_price:.4f}"
-                )
-
-                return fill
-
-        except IntegrityError as e:
-            logger.warning(
-                f"Duplicate position insert blocked for {symbol} (UNIQUE positions.symbol): {e}"
-            )
-            with get_db_session() as db:
-                existing = (
-                    db.query(Position)
-                    .filter(
-                        Position.symbol == symbol,
-                        Position.status == PositionStatus.OPEN,
-                    )
-                    .first()
-                )
-                if existing:
-                    self._positions[symbol] = existing.id
-            return None
+        return position
 
     def execute_exit(
         self,
         symbol: str,
         price: float,
         exit_reason: str,
-    ) -> Optional[PnL]:
-        position_id = self._positions.get(symbol)
-        if not position_id:
+    ) -> Optional[dict]:
+        position = self._positions.get(symbol)
+        if not position:
             logger.warning(f"No position to exit for {symbol}")
             return None
 
-        with get_db_session() as db:
-            position = db.query(Position).get(position_id)
-            if not position:
-                return None
+        side = position["side"]
+        quantity = position["quantity"]
+        entry_price = position["entry_price"]
 
-            exit_side = Side.SELL if position.side == Side.BUY else Side.BUY
+        slippage_mult = 1 + (self.slippage_bps / 10000)
+        exit_price = price * slippage_mult if side == Side.SELL else price / slippage_mult
 
-            slippage_mult = 1 + (self.slippage_bps / 10000)
-            fill_price = price * slippage_mult if exit_side == Side.BUY else price / slippage_mult
+        notional = exit_price * quantity
+        fee = notional * (self.fees_bps / 10000)
 
-            notional = fill_price * position.quantity
-            fee = notional * (self.fees_bps / 10000)
+        if side == Side.BUY:
+            gross_pnl = (exit_price - entry_price) * quantity
+        else:
+            gross_pnl = (entry_price - exit_price) * quantity
 
-            if position.side == Side.BUY:
-                gross_pnl = (fill_price - position.entry_price) * position.quantity
-            else:
-                gross_pnl = (position.entry_price - fill_price) * position.quantity
+        total_fees = position["fees_paid"] + fee
+        net_pnl = gross_pnl - total_fees
+        pnl_bps = (net_pnl / position["notional"]) * 10000
 
-            total_fees = (
-                position.notional * (self.fees_bps / 10000)
-                + fee
-            )
-            net_pnl = gross_pnl - total_fees
-            pnl_bps = (net_pnl / position.notional) * 10000
+        now = datetime.utcnow()
+        hold_time_sec = (now - position["entry_time"]).total_seconds()
 
-            now = datetime.utcnow()
-            hold_time_sec = (now - position.entry_time).total_seconds()
+        # Write PnL to Supabase
+        insert_row(
+            "pnl",
+            {
+                "timestamp": now.isoformat(),
+                "symbol": symbol,
+                "strategy_name": position["strategy_name"],
+                "entry_price": entry_price,
+                "exit_price": exit_price,
+                "quantity": quantity,
+                "side": side.value,
+                "gross_pnl": gross_pnl,
+                "fees": total_fees,
+                "net_pnl": net_pnl,
+                "pnl_bps": pnl_bps,
+                "hold_time_sec": hold_time_sec,
+                "exit_reason": exit_reason,
+            },
+        )
 
-            order = Order(
-                order_id=f"ORD-{uuid.uuid4().hex[:12]}",
-                timestamp=now,
-                symbol=symbol,
-                side=exit_side,
-                quantity=position.quantity,
-                price=price,
-                notional=notional,
-                status=OrderStatus.FILLED,
-                strategy_name=position.strategy_name,
-            )
-            db.add(order)
+        del self._positions[symbol]
 
-            pnl_record = PnL(
-                timestamp=now,
-                symbol=symbol,
-                strategy_name=position.strategy_name,
-                entry_price=position.entry_price,
-                exit_price=fill_price,
-                quantity=position.quantity,
-                side=position.side,
-                gross_pnl=gross_pnl,
-                fees=total_fees,
-                net_pnl=net_pnl,
-                pnl_bps=pnl_bps,
-                hold_time_sec=hold_time_sec,
-                exit_reason=exit_reason,
-            )
-            db.add(pnl_record)
+        logger.info(
+            f"Exit fill: {symbol} @ {exit_price:.4f} "
+            f"(reason={exit_reason}, pnl_bps={pnl_bps:.2f})"
+        )
 
-            position.status = PositionStatus.CLOSED
-            position.updated_at = now
+        return {
+            "symbol": symbol,
+            "net_pnl": net_pnl,
+            "pnl_bps": pnl_bps,
+            "exit_reason": exit_reason,
+        }
 
-            del self._positions[symbol]
-
-            logger.info(
-                f"Exit fill: {exit_side.value} {position.quantity:.6f} {symbol} @ {fill_price:.4f} "
-                f"(reason={exit_reason}, pnl_bps={pnl_bps:.2f})"
-            )
-
-            return pnl_record
-
-    def check_exits(self, symbol: str, current_price: float) -> Optional[PnL]:
-        position_id = self._positions.get(symbol)
-        if not position_id:
+    def check_exits(self, symbol: str, current_price: float) -> Optional[dict]:
+        position = self._positions.get(symbol)
+        if not position:
             return None
 
-        with get_db_session() as db:
-            position = db.query(Position).get(position_id)
-            if not position:
-                return None
+        now = datetime.utcnow()
 
-            now = datetime.utcnow()
+        if position["time_stop_at"] and now >= position["time_stop_at"]:
+            return self.execute_exit(symbol, current_price, "time_stop")
 
-            if position.time_stop_at and now >= position.time_stop_at:
-                return self.execute_exit(symbol, current_price, "time_stop")
+        if position["side"] == Side.BUY:
+            if current_price >= position["take_profit_price"]:
+                return self.execute_exit(symbol, current_price, "take_profit")
+            if current_price <= position["stop_loss_price"]:
+                return self.execute_exit(symbol, current_price, "stop_loss")
+        else:
+            if current_price <= position["take_profit_price"]:
+                return self.execute_exit(symbol, current_price, "take_profit")
+            if current_price >= position["stop_loss_price"]:
+                return self.execute_exit(symbol, current_price, "stop_loss")
 
-            if position.side == Side.BUY:
-                if current_price >= position.take_profit_price:
-                    return self.execute_exit(symbol, current_price, "take_profit")
-                if current_price <= position.stop_loss_price:
-                    return self.execute_exit(symbol, current_price, "stop_loss")
-            else:
-                if current_price <= position.take_profit_price:
-                    return self.execute_exit(symbol, current_price, "take_profit")
-                if current_price >= position.stop_loss_price:
-                    return self.execute_exit(symbol, current_price, "stop_loss")
-
-            return None
+        return None
