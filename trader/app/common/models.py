@@ -4,6 +4,7 @@ Tables: trades, orders, fills, pnl
 """
 
 from datetime import datetime
+import uuid
 
 from sqlalchemy import (
     Column,
@@ -14,8 +15,10 @@ from sqlalchemy import (
     Enum as SQLEnum,
     ForeignKey,
     Index,
+    JSON,
 )
 from sqlalchemy.orm import relationship
+from sqlalchemy.sql import func
 
 from trader.app.common.db import Base
 from shared.schemas import Side, OrderStatus, PositionStatus
@@ -125,3 +128,36 @@ class Position(Base):
     time_stop_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+# 🧠 Signal snapshots for ML training
+class SignalLog(Base):
+    __tablename__ = "signal_logs"
+
+    signal_id = Column(
+        String,
+        primary_key=True,
+        default=lambda: str(uuid.uuid4()),
+    )
+
+    symbol = Column(String, nullable=False, index=True)
+    strategy = Column(String, nullable=False)
+
+    # Frozen decision context
+    features = Column(JSON, nullable=False)
+    z_score = Column(Float, nullable=False)
+
+    entry_price = Column(Float, nullable=False)
+
+    timestamp = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=func.now(),
+        index=True,
+    )
+
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=func.now(),
+    )
