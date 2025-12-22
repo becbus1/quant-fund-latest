@@ -13,6 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from trader.app.common.config import get_config
 from trader.app.common.db import get_db_session
 from trader.app.common.models import Order, Fill, PnL, Position
+from trader.app.common.supabase_client import insert_row  # ✅ ADDED
 from shared.schemas import Side, OrderStatus, PositionStatus
 
 logger = logging.getLogger(__name__)
@@ -130,6 +131,20 @@ class PaperExecutor:
             logger.warning(f"Already have position in {symbol}, rejecting entry")
             return None
 
+        # ✅ INSERT SIGNAL (Supabase only — no SQLAlchemy)
+        signal_id = uuid.uuid4()
+        insert_row(
+            "signal_logs",
+            {
+                "signal_id": str(signal_id),
+                "symbol": symbol,
+                "strategy": strategy_name,
+                "side": side.value,
+                "confidence": 1.0,
+                "created_at": datetime.utcnow().isoformat(),
+            },
+        )
+
         slippage_mult = 1 + (self.slippage_bps / 10000)
         fill_price = price * slippage_mult if side == Side.BUY else price / slippage_mult
 
@@ -208,7 +223,6 @@ class PaperExecutor:
             logger.warning(
                 f"Duplicate position insert blocked for {symbol} (UNIQUE positions.symbol): {e}"
             )
-            # Ensure in-memory state matches DB reality so we don't keep retrying
             with get_db_session() as db:
                 existing = (
                     db.query(Position)
