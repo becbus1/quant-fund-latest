@@ -156,7 +156,6 @@ class BybitTradeIngester:
 
         for trade in trades_data:
             try:
-                # Parse trade data
                 timestamp = datetime.fromtimestamp(int(trade["T"]) / 1000)
                 side = Side.BUY if trade["S"] == "Buy" else Side.SELL
 
@@ -169,14 +168,11 @@ class BybitTradeIngester:
                     trade_id=str(trade["i"]),
                 )
 
-                # Add to buffer
                 self._trade_buffer.append(trade_obj)
 
-    # Call trade callback if set
-if self.on_trade:
-    self.on_trade(trade_obj)
+                if self.on_trade:
+                    self.on_trade(trade_obj)
 
-                # Flush buffer if full
                 if len(self._trade_buffer) >= self._buffer_size:
                     await self._flush_buffer()
 
