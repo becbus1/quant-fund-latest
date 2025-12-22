@@ -34,6 +34,9 @@ executor: PaperExecutor = None
 risk_manager: RiskManager = None
 strategies: List[StrategyEntry] = []
 
+# ✅ OPTION B: edge-trigger / cooldown guard
+last_entry_ts: Dict[str, float] = {}
+
 
 def load_strategies() -> List[StrategyEntry]:
     """Load enabled strategies from registry."""
@@ -78,13 +81,11 @@ class FeatureCalculator:
         buffer = self._trade_buffers[trade.symbol]
         buffer.append(trade)
 
-        # Trim buffer to window
         cutoff = trade.timestamp.timestamp() - self.window_size
         while buffer and buffer[0].timestamp.timestamp() < cutoff:
             buffer.pop(0)
 
     def get_features(self, symbol: str) -> Dict[str, float]:
-        """Calculate features for symbol."""
         buffer = self._trade_buffers.get(symbol, [])
 
         if len(buffer) < 10:
@@ -92,12 +93,9 @@ class FeatureCalculator:
 
         prices = [t.price for t in buffer]
         volumes = [t.quantity * t.price for t in buffer]
-        buy_volume = sum(
-            t.quantity * t.price for t in buffer if t.side == Side.BUY
-        )
-        sell_volume = sum(
-            t.quantity * t.price for t in buffer if t.side == Side.SELL
-        )
+
+        buy_volume = sum(t.quantity * t.price for t in buffer if t.side == Side.BUY)
+        sell_volume = sum(t.quantity * t.price for t in buffer if t.side == Side.SELL)
         total_volume = buy_volume + sell_volume
 
         if total_volume == 0:
@@ -149,7 +147,7 @@ feature_calculator = FeatureCalculator()
 
 def on_trade_received(trade: TradeData) -> None:
     """Callback for each received trade."""
-    global executor, risk_manager, strategies, feature_calculator
+    global executor, risk_manager, strategies, feature_calculator, last_entry_ts
 
     if not executor or not risk_manager:
         return
@@ -167,6 +165,12 @@ def on_trade_received(trade: TradeData) -> None:
     # 🔒 HARD GUARD: never attempt entry if a position already exists
     if executor.has_position(trade.symbol):
         return
+
+    # ✅ OPTION B: EDGE TRIGGER / COOLDOWN
+    now = trade.timestamp.timestamp()
+    if now - last_entry_ts.get(trade.symbol, 0) < 1.0:
+        return
+    last_entry_ts[trade.symbol] = now
 
     # Check for entry signals
     for strategy in strategies:
