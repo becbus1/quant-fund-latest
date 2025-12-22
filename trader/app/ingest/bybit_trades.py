@@ -34,9 +34,11 @@ class BybitTradeIngester:
         self.symbols = symbols or config.symbols
         self.on_trade = on_trade
         self.ws_reconnect_delay = config.ws_reconnect_delay
+
         self._ws: Optional[websockets.WebSocketClientProtocol] = None
         self._running = False
         self._enabled_symbols: Set[str] = set(self.symbols)
+
         self._trade_buffer: List[TradeData] = []
         self._buffer_size = 100
         self._last_flush = datetime.utcnow()
@@ -90,16 +92,13 @@ class BybitTradeIngester:
             self._ws = ws
             logger.info("Connected to Bybit WebSocket")
 
-            # Subscribe to trade topics for all symbols
             topics = [f"publicTrade.{symbol}" for symbol in self.symbols]
             subscribe_msg = {"op": "subscribe", "args": topics}
             await ws.send(json.dumps(subscribe_msg))
             logger.info(f"Subscribed to topics: {topics}")
 
-            # Start heartbeat task
             asyncio.create_task(self._heartbeat())
 
-            # Process incoming messages
             async for message in ws:
                 if not self._running:
                     break
@@ -121,11 +120,9 @@ class BybitTradeIngester:
         try:
             data = json.loads(message)
 
-            # Handle pong response
             if data.get("op") == "pong":
                 return
 
-            # Handle subscription confirmation
             if data.get("op") == "subscribe":
                 if data.get("success"):
                     logger.info("Subscription confirmed")
@@ -133,12 +130,10 @@ class BybitTradeIngester:
                     logger.error(f"Subscription failed: {data}")
                 return
 
-            # Handle trade data
             topic = data.get("topic", "")
             if topic.startswith("publicTrade."):
                 await self._process_trades(data)
 
-            # Periodic buffer flush
             now = datetime.utcnow()
             if (now - self._last_flush).total_seconds() >= self._flush_interval_sec:
                 await self._flush_buffer()
@@ -171,7 +166,10 @@ class BybitTradeIngester:
                 self._trade_buffer.append(trade_obj)
 
                 if self.on_trade:
-                    self.on_trade(trade_obj)
+                    try:
+                        self.on_trade(trade_obj)
+                    except Exception as e:
+                        logger.error(f"Strategy error: {e}")
 
                 if len(self._trade_buffer) >= self._buffer_size:
                     await self._flush_buffer()
@@ -191,7 +189,6 @@ class BybitTradeIngester:
         try:
             with get_db_session() as db:
                 for trade_data in trades_to_insert:
-                    # Check for duplicate
                     existing = (
                         db.query(Trade)
                         .filter(Trade.trade_id == trade_data.trade_id)
@@ -214,7 +211,6 @@ class BybitTradeIngester:
 
         except Exception as e:
             logger.error(f"Failed to flush trades to database: {e}")
-            # Re-add trades to buffer for retry
             self._trade_buffer.extend(trades_to_insert)
 
     def get_recent_trades(
