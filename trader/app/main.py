@@ -262,7 +262,11 @@ async def lifespan(app: FastAPI):
 
     set_components(executor, risk_manager, ingester)
 
-    ingester_task = asyncio.create_task(ingester.start())
+    async def start_ingester():
+        await asyncio.sleep(1)  # allow FastAPI to boot
+        await ingester.start()
+
+    ingester_task = asyncio.create_task(start_ingester())
 
     logger.info(
         f"Paper trading system started. "
