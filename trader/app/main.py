@@ -14,7 +14,8 @@ from typing import Dict, List
 from fastapi import FastAPI
 
 from trader.app.common.config import get_config
-from trader.app.common.db import init_db
+from trader.app.common.db import init_db, get_db_session
+from trader.app.common.models import SignalLog
 from trader.app.ingest.bybit_trades import BybitTradeIngester
 from trader.app.executor.paper_executor import PaperExecutor
 from trader.app.risk.limits import RiskManager
@@ -219,6 +220,19 @@ def on_trade_received(trade: TradeData) -> None:
                 f"Strategy {strategy.name} entered {side.value} {trade.symbol} "
                 f"@ {trade.price:.4f} (z={z_score:.2f})"
             )
+
+            # 🧠 SIGNAL SNAPSHOT (ML training data)
+            with get_db_session() as db:
+                db.add(
+                    SignalLog(
+                        symbol=trade.symbol,
+                        strategy=strategy.name,
+                        features=features,
+                        z_score=z_score,
+                        entry_price=trade.price,
+                        timestamp=trade.timestamp,
+                    )
+                )
 
 
 @asynccontextmanager
