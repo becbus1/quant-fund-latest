@@ -8,6 +8,8 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
+from sqlalchemy.exc import IntegrityError
+
 from trader.app.common.config import get_config
 from trader.app.common.db import get_db_session
 from trader.app.common.models import Order, Fill, PnL, Position
@@ -148,58 +150,77 @@ class PaperExecutor:
 
         time_stop_at = now + timedelta(seconds=self.time_stop_sec)
 
-        with get_db_session() as db:
-            order = Order(
-                order_id=order_id,
-                timestamp=now,
-                symbol=symbol,
-                side=side,
-                quantity=quantity,
-                price=price,
-                notional=notional,
-                status=OrderStatus.FILLED,
-                strategy_name=strategy_name,
+        try:
+            with get_db_session() as db:
+                order = Order(
+                    order_id=order_id,
+                    timestamp=now,
+                    symbol=symbol,
+                    side=side,
+                    quantity=quantity,
+                    price=price,
+                    notional=notional,
+                    status=OrderStatus.FILLED,
+                    strategy_name=strategy_name,
+                )
+                db.add(order)
+
+                fill = Fill(
+                    fill_id=fill_id,
+                    order_id=order_id,
+                    timestamp=now,
+                    symbol=symbol,
+                    side=side,
+                    quantity=quantity,
+                    price=fill_price,
+                    notional=notional,
+                    fee=fee,
+                    slippage=abs(fill_price - price) * quantity,
+                )
+                db.add(fill)
+
+                position = Position(
+                    symbol=symbol,
+                    side=side,
+                    quantity=quantity,
+                    entry_price=fill_price,
+                    notional=notional,
+                    entry_time=now,
+                    strategy_name=strategy_name,
+                    status=PositionStatus.OPEN,
+                    take_profit_price=take_profit_price,
+                    stop_loss_price=stop_loss_price,
+                    time_stop_at=time_stop_at,
+                )
+                db.add(position)
+                db.flush()
+
+                # ✅ store ID only
+                self._positions[symbol] = position.id
+
+                logger.info(
+                    f"Entry fill: {side.value} {quantity:.6f} {symbol} @ {fill_price:.4f}"
+                )
+
+                return fill
+
+        except IntegrityError as e:
+            logger.warning(
+                f"Duplicate position insert blocked for {symbol} (UNIQUE positions.symbol): {e}"
             )
-            db.add(order)
-
-            fill = Fill(
-                fill_id=fill_id,
-                order_id=order_id,
-                timestamp=now,
-                symbol=symbol,
-                side=side,
-                quantity=quantity,
-                price=fill_price,
-                notional=notional,
-                fee=fee,
-                slippage=abs(fill_price - price) * quantity,
-            )
-            db.add(fill)
-
-            position = Position(
-                symbol=symbol,
-                side=side,
-                quantity=quantity,
-                entry_price=fill_price,
-                notional=notional,
-                entry_time=now,
-                strategy_name=strategy_name,
-                status=PositionStatus.OPEN,
-                take_profit_price=take_profit_price,
-                stop_loss_price=stop_loss_price,
-                time_stop_at=time_stop_at,
-            )
-            db.add(position)
-            db.flush()
-
-            # ✅ store ID only
-            self._positions[symbol] = position.id
-
-            logger.info(
-                f"Entry fill: {side.value} {quantity:.6f} {symbol} @ {fill_price:.4f}"
-            )
-
-            return fill
+            # Ensure in-memory state matches DB reality so we don't keep retrying
+            with get_db_session() as db:
+                existing = (
+                    db.query(Position)
+                    .filter(
+                        Position.symbol == symbol,
+                        Position.status == PositionStatus.OPEN,
+                    )
+                    .first()
+                )
+                if existing:
+                    self._positions[symbol] = existing.id
+            return None
 
     def execute_exit(
         self,
