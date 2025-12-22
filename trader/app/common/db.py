@@ -78,18 +78,11 @@ def get_session_factory():
 def init_db() -> None:
     """
     Initialize DB schema.
-    ⚠️ Safe for Supabase (no-op if tables already exist).
-    """
-    from trader.app.common.models import (  # noqa: F401
-        Trade,
-        Order,
-        Fill,
-        PnL,
-        Position,
-        SignalLog,
-    )
 
-    Base.metadata.create_all(bind=get_engine())
+    ❗ Supabase schema is managed externally.
+    ❗ Do NOT run create_all against Supabase.
+    """
+    pass
 
 
 def get_db() -> Generator[Session, None, None]:
