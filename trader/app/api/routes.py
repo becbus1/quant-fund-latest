@@ -7,12 +7,12 @@ import logging
 from datetime import datetime
 from typing import Dict, List
 
-from fastapi import APIRouter, HTTPException, Query, Depends
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from trader.app.common.config import get_config
 from trader.app.common.db import get_db_session
-from trader.app.common.models import Order, Fill, PnL, Position
+from trader.app.common.models import PnL
 from shared.schemas import PositionStatus
 
 logger = logging.getLogger(__name__)
@@ -32,6 +32,10 @@ def set_components(executor, risk_manager, ingester):
     _risk_manager = risk_manager
     _ingester = ingester
 
+
+# =======================
+# Response Models
+# =======================
 
 class HealthResponse(BaseModel):
     status: str
@@ -58,7 +62,6 @@ class PositionResponse(BaseModel):
     side: str
     quantity: float
     entry_price: float
-    notional: float
     unrealized_pnl: float
     entry_time: str
     strategy_name: str
@@ -70,6 +73,10 @@ class KillSwitchResponse(BaseModel):
     positions_closed: int
     total_pnl: float
 
+
+# =======================
+# Routes
+# =======================
 
 @router.get("/health", response_model=HealthResponse)
 async def health_check():
@@ -92,15 +99,15 @@ async def get_metrics():
     if not _executor or not _risk_manager:
         raise HTTPException(status_code=503, detail="System not initialized")
 
-    # Get PnL data
+    # Realized PnL
     daily_pnl = _executor.get_daily_pnl()
     total_pnl = _executor.get_total_pnl()
 
-    # Get current prices for unrealized PnL
+    # Unrealized PnL
     prices = _get_current_prices()
     unrealized_pnl = _executor.get_unrealized_pnl(prices)
 
-    # Get trade statistics
+    # Trade statistics
     with get_db_session() as db:
         pnl_records = db.query(PnL).all()
         total_trades = len(pnl_records)
@@ -113,7 +120,8 @@ async def get_metrics():
             win_rate = 0.0
             avg_pnl_bps = 0.0
 
-    open_positions = len(_executor.get_all_positions())
+    # ✅ SAFE: snapshots only
+    open_positions = len(_executor.get_all_position_snapshots())
     risk_status = _risk_manager.get_risk_status()
 
     return MetricsResponse(
@@ -131,31 +139,31 @@ async def get_metrics():
 
 @router.get("/positions", response_model=List[PositionResponse])
 async def get_positions():
-    """Get all open positions."""
+    """Get all open positions (SAFE snapshots)."""
     if not _executor:
         raise HTTPException(status_code=503, detail="System not initialized")
 
-    positions = _executor.get_all_positions()
+    positions = _executor.get_all_position_snapshots()
     prices = _get_current_prices()
 
     result = []
     for pos in positions:
-        current_price = prices.get(pos.symbol, pos.entry_price)
-        if pos.side.value == "buy":
-            unrealized = (current_price - pos.entry_price) * pos.quantity
+        current_price = prices.get(pos["symbol"], pos["entry_price"])
+
+        if pos["side"].value == "buy":
+            unrealized = (current_price - pos["entry_price"]) * pos["quantity"]
         else:
-            unrealized = (pos.entry_price - current_price) * pos.quantity
+            unrealized = (pos["entry_price"] - current_price) * pos["quantity"]
 
         result.append(
             PositionResponse(
-                symbol=pos.symbol,
-                side=pos.side.value,
-                quantity=pos.quantity,
-                entry_price=pos.entry_price,
-                notional=pos.notional,
+                symbol=pos["symbol"],
+                side=pos["side"].value,
+                quantity=pos["quantity"],
+                entry_price=pos["entry_price"],
                 unrealized_pnl=unrealized,
-                entry_time=pos.entry_time.isoformat(),
-                strategy_name=pos.strategy_name or "",
+                entry_time=pos["entry_time"].isoformat(),
+                strategy_name=pos["strategy_name"] or "",
             )
         )
 
@@ -164,10 +172,7 @@ async def get_positions():
 
 @router.get("/killswitch", response_model=KillSwitchResponse)
 async def activate_killswitch(token: str = Query(...)):
-    """
-    Activate kill switch to close all positions and halt trading.
-    Requires correct token for authorization.
-    """
+    """Activate kill switch to close all positions."""
     config = get_config()
 
     if token != config.killswitch_token:
@@ -180,7 +185,6 @@ async def activate_killswitch(token: str = Query(...)):
     logger.critical("Kill switch activated via API")
     _risk_manager.activate_kill_switch()
 
-    # Close all positions
     prices = _get_current_prices()
     pnl_records = _executor.close_all_positions(prices, "kill_switch")
 
@@ -221,6 +225,10 @@ async def get_recent_trades(symbol: str = Query(...), limit: int = Query(100, le
         for t in trades
     ]
 
+
+# =======================
+# Helpers
+# =======================
 
 def _get_current_prices() -> Dict[str, float]:
     """Get current prices for all symbols."""
