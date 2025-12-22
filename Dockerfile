@@ -17,4 +17,5 @@ ENV MODE=paper
 
 EXPOSE 8080
 
-CMD ["uvicorn", "trader.app.main:app", "--host", "0.0.0.0", "--port", "8080"]
+# 🔑 IMPORTANT: dynamic entrypoint
+CMD ["sh", "-c", "uvicorn ${APP_MODULE} --host 0.0.0.0 --port 8080"]
