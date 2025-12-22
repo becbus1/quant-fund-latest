@@ -31,7 +31,7 @@ class PaperExecutor:
 
         # Store ONLY position IDs (never ORM objects)
         self._positions: Dict[str, int] = {}
-        self._load_positions()
+        logger.info("Skipping DB-backed position loading (Supabase-only mode)")
 
     def _load_positions(self) -> None:
         """Load open positions from database."""
