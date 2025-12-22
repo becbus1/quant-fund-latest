@@ -90,7 +90,6 @@ class FeatureCalculator:
         if len(buffer) < 10:
             return {}
 
-        # Calculate features
         prices = [t.price for t in buffer]
         volumes = [t.quantity * t.price for t in buffer]
         buy_volume = sum(
@@ -104,19 +103,15 @@ class FeatureCalculator:
         if total_volume == 0:
             return {}
 
-        # Order flow imbalance
         ofi = (buy_volume - sell_volume) / total_volume
 
-        # Volume metrics
         avg_volume = sum(volumes) / len(volumes)
         recent_volume = sum(volumes[-10:]) / 10 if len(volumes) >= 10 else avg_volume
         volume_spike = recent_volume / avg_volume if avg_volume > 0 else 1.0
 
-        # Trade intensity
         time_span = (buffer[-1].timestamp - buffer[0].timestamp).total_seconds()
         intensity = len(buffer) / time_span if time_span > 0 else 0
 
-        # Volatility
         if len(prices) > 1:
             import statistics
 
@@ -128,10 +123,8 @@ class FeatureCalculator:
         else:
             volatility = 0
 
-        # Price range
         price_range = (max(prices) - min(prices)) / min(prices) if min(prices) > 0 else 0
 
-        # VWAP
         total_qty = sum(t.quantity for t in buffer)
         vwap = sum(t.price * t.quantity for t in buffer) / total_qty if total_qty > 0 else prices[-1]
         vwap_deviation = (prices[-1] - vwap) / vwap if vwap > 0 else 0
@@ -146,13 +139,9 @@ class FeatureCalculator:
         }
 
     def get_z_score(self, symbol: str, feature: str = "order_flow_imbalance") -> float:
-        """Calculate z-score for a feature."""
         features = self.get_features(symbol)
         value = features.get(feature, 0)
-
-        # Simple z-score approximation (OFI ranges from -1 to 1)
-        # Normalize to approximate z-score
-        return value * 3  # Scale to roughly match z-score range
+        return value * 3
 
 
 feature_calculator = FeatureCalculator()
@@ -165,16 +154,18 @@ def on_trade_received(trade: TradeData) -> None:
     if not executor or not risk_manager:
         return
 
-    # Check kill switch
     if risk_manager.is_kill_switch_active():
         return
 
-    # Add to feature calculator
     feature_calculator.add_trade(trade)
 
     # Check exits for existing positions
     if executor.has_position(trade.symbol):
         executor.check_exits(trade.symbol, trade.price)
+        return
+
+    # 🔒 HARD GUARD: never attempt entry if a position already exists
+    if executor.has_position(trade.symbol):
         return
 
     # Check for entry signals
@@ -186,27 +177,21 @@ def on_trade_received(trade: TradeData) -> None:
         if not features:
             continue
 
-        # Calculate entry signal
         z_score = feature_calculator.get_z_score(trade.symbol)
-        anomaly_threshold = strategy.parameters.min_anomaly_score
 
-        # Check entry conditions
         should_enter = False
         side = None
 
         if z_score >= strategy.parameters.entry_z_score:
-            # Strong buy pressure, but we sell (mean reversion)
             should_enter = True
             side = Side.SELL
         elif z_score <= -strategy.parameters.entry_z_score:
-            # Strong sell pressure, but we buy (mean reversion)
             should_enter = True
             side = Side.BUY
 
         if not should_enter:
             continue
 
-        # Risk check  ✅ FIXED LINE
         allowed, reason = risk_manager.can_open_position(
             trade.symbol,
             len(executor.get_all_position_snapshots()),
@@ -216,7 +201,6 @@ def on_trade_received(trade: TradeData) -> None:
             logger.debug(f"Entry rejected for {trade.symbol}: {reason}")
             continue
 
-        # Execute entry
         fill = executor.execute_entry(
             symbol=trade.symbol,
             side=side,
@@ -235,38 +219,30 @@ def on_trade_received(trade: TradeData) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application lifespan handler."""
     global ingester, executor, risk_manager, strategies, feature_calculator
 
     logger.info("Starting paper trading system...")
     config = get_config()
 
-    # Validate mode
     if config.mode != "paper":
         raise ValueError("Only paper trading mode is allowed")
 
-    # Initialize database
     init_db()
     logger.info("Database initialized")
 
-    # Initialize components
     executor = PaperExecutor()
     risk_manager = RiskManager()
     feature_calculator = FeatureCalculator(config.window_size)
 
-    # Load strategies
     strategies = load_strategies()
 
-    # Initialize ingester with callback
     ingester = BybitTradeIngester(
         symbols=config.symbols,
         on_trade=on_trade_received,
     )
 
-    # Set components for API routes
     set_components(executor, risk_manager, ingester)
 
-    # Start ingester in background
     ingester_task = asyncio.create_task(ingester.start())
 
     logger.info(
@@ -276,7 +252,6 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # Cleanup
     logger.info("Shutting down paper trading system...")
     await ingester.stop()
     ingester_task.cancel()
@@ -287,7 +262,6 @@ async def lifespan(app: FastAPI):
     logger.info("Paper trading system stopped")
 
 
-# Create FastAPI app
 app = FastAPI(
     title="Paper Trading System",
     description="Quantitative paper trading with ML edge strategies",
@@ -295,13 +269,11 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Include API routes
 app.include_router(router)
 
 
 @app.get("/")
 async def root():
-    """Root endpoint."""
     return {
         "service": "paper-trading-system",
         "mode": "paper",
