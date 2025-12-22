@@ -20,6 +20,7 @@ from trader.app.ingest.bybit_trades import BybitTradeIngester
 from trader.app.executor.paper_executor import PaperExecutor
 from trader.app.risk.limits import RiskManager
 from trader.app.api.routes import router, set_components
+from trader.app.dashboard.routes import router as dashboard_router  # ✅ NEW
 from shared.schemas import StrategyEntry, TradeData, Side
 
 # Configure logging
@@ -288,6 +289,7 @@ app = FastAPI(
 )
 
 app.include_router(router)
+app.include_router(dashboard_router)  # ✅ NEW
 
 
 @app.get("/")
