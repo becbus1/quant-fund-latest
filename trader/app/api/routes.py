@@ -107,18 +107,10 @@ async def get_metrics():
     prices = _get_current_prices()
     unrealized_pnl = _executor.get_unrealized_pnl(prices)
 
-    # Trade statistics
-    with get_db_session() as db:
-        pnl_records = db.query(PnL).all()
-        total_trades = len(pnl_records)
-
-        if total_trades > 0:
-            wins = sum(1 for p in pnl_records if p.net_pnl > 0)
-            win_rate = wins / total_trades
-            avg_pnl_bps = sum(p.pnl_bps for p in pnl_records) / total_trades
-        else:
-            win_rate = 0.0
-            avg_pnl_bps = 0.0
+    # Trade statistics (DB REMOVED — Supabase-only mode)
+    total_trades = 0
+    win_rate = 0.0
+    avg_pnl_bps = 0.0
 
     # ✅ SAFE: snapshots only
     open_positions = len(_executor.get_all_position_snapshots())
