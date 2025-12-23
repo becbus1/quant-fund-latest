@@ -13,8 +13,8 @@ from trader.app.common.supabase_client import insert_row
 from shared.schemas import Side
 
 # ✅ NEW: edge computation imports
-from edge_factory.zscore import compute_z_score
-from edge_factory.confidence import compute_confidence
+from trader.app.edge_factory.zscore import compute_z_score
+from trader.app.edge_factory.confidence import compute_confidence
 
 logger = logging.getLogger(__name__)
 
