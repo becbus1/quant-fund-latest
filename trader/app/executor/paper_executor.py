@@ -13,7 +13,6 @@ from trader.app.common.supabase_client import insert_row
 from shared.schemas import Side
 
 # ✅ NEW: edge computation imports
-from trader.app.edge_factory.zscore import compute_z_score
 from trader.app.edge_factory.confidence import compute_confidence
 
 logger = logging.getLogger(__name__)
@@ -50,13 +49,13 @@ class PaperExecutor:
         strategy_name: str,
         take_profit_bps: float,
         stop_loss_bps: float,
+        z_score: float,   # ✅ ADD THIS
     ) -> Optional[dict]:
         if self.has_position(symbol):
             logger.warning(f"Already have position in {symbol}, rejecting entry")
             return None
 
         # ✅ Compute edge metrics
-        z_score = compute_z_score(symbol, side)
         confidence = compute_confidence(z_score)
 
         # Log signal to Supabase
