@@ -60,7 +60,7 @@ class PaperExecutor:
                 "symbol": symbol,
                 "strategy": strategy_name,
                 "features": {
-                    "side": side.value
+                    "side": side.value.upper()
                 },
                 "z_score": 0.0,
                 "entry_price": price,
@@ -153,7 +153,7 @@ class PaperExecutor:
                 "entry_price": entry_price,
                 "exit_price": exit_price,
                 "quantity": quantity,
-                "side": side.value,
+                "side": side.value.upper(),
                 "gross_pnl": gross_pnl,
                 "fees": total_fees,
                 "net_pnl": net_pnl,
