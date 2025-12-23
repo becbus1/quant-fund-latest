@@ -214,6 +214,7 @@ def on_trade_received(trade: TradeData) -> None:
             strategy_name=strategy.name,
             take_profit_bps=strategy.parameters.take_profit_bps,
             stop_loss_bps=strategy.parameters.stop_loss_bps,
+            z_score=z_score,   # ✅ ADD THIS
         )
 
         if fill:
