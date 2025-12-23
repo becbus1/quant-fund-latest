@@ -1,4 +1,4 @@
 # edge_factory.features package
-from edge_factory.features.feature_engineering import FeatureEngineer
+from trader.app.edge_factory.features.feature_engineering import FeatureEngineer
 
 __all__ = ["FeatureEngineer"]
