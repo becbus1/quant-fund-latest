@@ -56,7 +56,7 @@ class PaperExecutor:
             return None
 
         # ✅ Compute edge metrics
-        z_score = compute_z_score(symbol)
+        z_score = compute_z_score(symbol, side)
         confidence = compute_confidence(z_score)
 
         # Log signal to Supabase
