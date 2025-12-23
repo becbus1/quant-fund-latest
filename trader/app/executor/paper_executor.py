@@ -55,7 +55,7 @@ class PaperExecutor:
             logger.warning(f"Already have position in {symbol}, rejecting entry")
             return None
 
-        # ✅ NEW: compute real z-score + confidence
+        # ✅ Compute edge metrics
         z_score = compute_z_score(symbol)
         confidence = compute_confidence(z_score)
 
@@ -81,7 +81,10 @@ class PaperExecutor:
         slippage_mult = 1 + (self.slippage_bps / 10000)
         fill_price = price * slippage_mult if side == Side.BUY else price / slippage_mult
 
-        quantity = self.notional_usdt / fill_price
+        # ✅ CONFIDENCE-WEIGHTED POSITION SIZING
+        effective_notional = self.notional_usdt * confidence
+        quantity = effective_notional / fill_price
+
         notional = fill_price * quantity
         fee = notional * (self.fees_bps / 10000)
 
@@ -113,7 +116,8 @@ class PaperExecutor:
         self._positions[symbol] = position
 
         logger.info(
-            f"Entry fill: {side.value} {quantity:.6f} {symbol} @ {fill_price:.4f}"
+            f"Entry fill: {side.value} {quantity:.6f} {symbol} @ {fill_price:.4f} "
+            f"(confidence={confidence:.2f})"
         )
 
         return position
@@ -151,7 +155,6 @@ class PaperExecutor:
         now = datetime.utcnow()
         hold_time_sec = (now - position["entry_time"]).total_seconds()
 
-        # Write PnL to Supabase
         insert_row(
             "pnl",
             {
