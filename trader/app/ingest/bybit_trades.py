@@ -197,22 +197,4 @@ class BybitTradeIngester:
         self, symbol: str, limit: int = 1000
     ) -> List[TradeData]:
         """Get recent trades from database."""
-        with get_db_session() as db:
-            trades = (
-                db.query(Trade)
-                .filter(Trade.symbol == symbol)
-                .order_by(Trade.timestamp.desc())
-                .limit(limit)
-                .all()
-            )
-            return [
-                TradeData(
-                    timestamp=t.timestamp,
-                    symbol=t.symbol,
-                    price=t.price,
-                    quantity=t.quantity,
-                    side=t.side,
-                    trade_id=t.trade_id,
-                )
-                for t in reversed(trades)
-            ]
+        return []
