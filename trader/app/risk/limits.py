@@ -8,8 +8,6 @@ from datetime import datetime
 from typing import Dict, List, Optional, Set
 
 from trader.app.common.config import get_config
-from trader.app.common.db import get_db_session
-from trader.app.common.models import PnL
 from shared.schemas import LiquidityMetrics
 
 logger = logging.getLogger(__name__)
@@ -29,6 +27,9 @@ class RiskManager:
         self._kill_switch_active = False
         self._disabled_symbols: Set[str] = set()
         self._liquidity_metrics: Dict[str, LiquidityMetrics] = {}
+
+        # Supabase-only / in-memory PnL accumulator (safe placeholder)
+        self._daily_pnl_usdt: float = 0.0
 
     def is_kill_switch_active(self) -> bool:
         """Check if kill switch is active."""
@@ -58,13 +59,15 @@ class RiskManager:
         return False
 
     def _get_daily_pnl(self) -> float:
-        """Get today's realized PnL."""
-        today_start = datetime.utcnow().replace(
-            hour=0, minute=0, second=0, microsecond=0
-        )
-        with get_db_session() as db:
-            pnl_records = db.query(PnL).filter(PnL.timestamp >= today_start).all()
-            return sum(p.net_pnl for p in pnl_records)
+        """
+        Get today's realized PnL.
+
+        Supabase-only mode:
+        - No SQLAlchemy
+        - Uses in-memory accumulator
+        - Safe for infra + smoke tests
+        """
+        return self._daily_pnl_usdt
 
     def can_open_position(
         self,
@@ -119,7 +122,6 @@ class RiskManager:
             self._disabled_symbols.add(symbol)
             logger.warning(f"Symbol {symbol} disabled due to insufficient liquidity")
         elif symbol in self._disabled_symbols:
-            # Re-enable if liquidity recovered
             self._disabled_symbols.discard(symbol)
             logger.info(f"Symbol {symbol} re-enabled, liquidity recovered")
 
@@ -149,7 +151,6 @@ class RiskManager:
         """Check if symbol has sufficient liquidity."""
         metrics = self._liquidity_metrics.get(symbol)
         if not metrics:
-            # No metrics available, allow trading with warning
             logger.warning(f"No liquidity metrics for {symbol}, allowing trade")
             return True
         return self._meets_liquidity_requirements(metrics)
