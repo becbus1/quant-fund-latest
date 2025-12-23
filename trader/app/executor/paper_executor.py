@@ -59,7 +59,12 @@ class PaperExecutor:
                 "signal_id": str(signal_id),
                 "symbol": symbol,
                 "strategy": strategy_name,
-                "side": side.value,
+                "features": {
+                    "side": side.value
+                },
+                "z_score": 0.0,
+                "entry_price": price,
+                "timestamp": datetime.utcnow().isoformat(),
                 "confidence": 1.0,
                 "created_at": datetime.utcnow().isoformat(),
             },
