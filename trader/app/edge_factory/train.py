@@ -12,20 +12,28 @@ All output goes to registry/strategies.json for the trader to consume.
 import argparse
 import logging
 import os
-import sys
 from datetime import datetime
 from typing import List
 
-# Add parent to path for absolute imports
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from edge_factory.data.fetch_trades import TradeFetcher
-from edge_factory.data.datasets import TradeDataset
-from edge_factory.features.feature_engineering import FeatureEngineer
-from edge_factory.models.anomaly_iforest import AnomalyDetector, AnomalyDetectorConfig
-from edge_factory.models.meta_labeler import MetaLabeler, MetaLabelConfig
-from edge_factory.backtests.backtest_runner import BacktestRunner, BacktestConfig
-from edge_factory.selection.evaluator import StrategyEvaluator, EvaluationConfig
+from trader.app.edge_factory.data.fetch_trades import TradeFetcher
+from trader.app.edge_factory.data.datasets import TradeDataset
+from trader.app.edge_factory.features.feature_engineering import FeatureEngineer
+from trader.app.edge_factory.models.anomaly_iforest import (
+    AnomalyDetector,
+    AnomalyDetectorConfig,
+)
+from trader.app.edge_factory.models.meta_labeler import (
+    MetaLabeler,
+    MetaLabelConfig,
+)
+from trader.app.edge_factory.backtests.backtest_runner import (
+    BacktestRunner,
+    BacktestConfig,
+)
+from trader.app.edge_factory.selection.evaluator import (
+    StrategyEvaluator,
+    EvaluationConfig,
+)
 from shared.schemas import StrategyParameters
 
 # Configure logging
