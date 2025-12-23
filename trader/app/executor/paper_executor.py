@@ -12,6 +12,10 @@ from trader.app.common.config import get_config
 from trader.app.common.supabase_client import insert_row
 from shared.schemas import Side
 
+# ✅ NEW: edge computation imports
+from edge_factory.zscore import compute_z_score
+from edge_factory.confidence import compute_confidence
+
 logger = logging.getLogger(__name__)
 
 
@@ -51,6 +55,10 @@ class PaperExecutor:
             logger.warning(f"Already have position in {symbol}, rejecting entry")
             return None
 
+        # ✅ NEW: compute real z-score + confidence
+        z_score = compute_z_score(symbol)
+        confidence = compute_confidence(z_score)
+
         # Log signal to Supabase
         signal_id = uuid.uuid4()
         insert_row(
@@ -62,10 +70,10 @@ class PaperExecutor:
                 "features": {
                     "side": side.value.upper()
                 },
-                "z_score": 0.0,
+                "z_score": z_score,
                 "entry_price": price,
                 "timestamp": datetime.utcnow().isoformat(),
-                "confidence": 1.0,
+                "confidence": confidence,
                 "created_at": datetime.utcnow().isoformat(),
             },
         )
