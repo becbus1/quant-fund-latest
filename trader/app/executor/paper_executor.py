@@ -49,17 +49,16 @@ class PaperExecutor:
         strategy_name: str,
         take_profit_bps: float,
         stop_loss_bps: float,
-        z_score: float,   # ✅ ADD THIS
+        z_score: float,
     ) -> Optional[dict]:
         if self.has_position(symbol):
             logger.warning(f"Already have position in {symbol}, rejecting entry")
             return None
 
-        # ✅ Compute edge metrics
         confidence = compute_confidence(z_score)
 
-        # Log signal to Supabase
         signal_id = uuid.uuid4()
+
         insert_row(
             "signal_logs",
             {
@@ -80,7 +79,6 @@ class PaperExecutor:
         slippage_mult = 1 + (self.slippage_bps / 10000)
         fill_price = price * slippage_mult if side == Side.BUY else price / slippage_mult
 
-        # ✅ CONFIDENCE-WEIGHTED POSITION SIZING
         effective_notional = self.notional_usdt * confidence
         quantity = effective_notional / fill_price
 
@@ -99,6 +97,9 @@ class PaperExecutor:
         time_stop_at = now + timedelta(seconds=self.time_stop_sec)
 
         position = {
+            "signal_id": str(signal_id),          # ✅ STORE FOR ML
+            "features": {"side": side.value.upper()},  # ✅ STORE FOR ML
+            "z_score": z_score,                   # ✅ STORE FOR ML
             "symbol": symbol,
             "side": side,
             "quantity": quantity,
@@ -168,6 +169,24 @@ class PaperExecutor:
                 "fees": total_fees,
                 "net_pnl": net_pnl,
                 "pnl_bps": pnl_bps,
+                "hold_time_sec": hold_time_sec,
+                "exit_reason": exit_reason,
+            },
+        )
+
+        # ✅ ML TRAINING EVENT INSERT (THIS IS THE KEY LINE YOU WERE MISSING)
+        insert_row(
+            "ml_training_events",
+            {
+                "signal_id": position["signal_id"],
+                "symbol": symbol,
+                "strategy": position["strategy_name"],
+                "signal_timestamp": position["entry_time"].isoformat(),
+                "features": position["features"],
+                "z_score": position["z_score"],
+                "net_pnl": net_pnl,
+                "pnl_bps": pnl_bps,
+                "win": net_pnl > 0,
                 "hold_time_sec": hold_time_sec,
                 "exit_reason": exit_reason,
             },
