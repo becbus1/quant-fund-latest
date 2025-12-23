@@ -222,19 +222,6 @@ def on_trade_received(trade: TradeData) -> None:
                 f"@ {trade.price:.4f} (z={z_score:.2f})"
             )
 
-            # 🧠 SIGNAL SNAPSHOT (ML training data)
-            with get_db_session() as db:
-                db.add(
-                    SignalLog(
-                        symbol=trade.symbol,
-                        strategy=strategy.name,
-                        features=features,
-                        z_score=z_score,
-                        entry_price=trade.price,
-                        timestamp=trade.timestamp,
-                    )
-                )
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
