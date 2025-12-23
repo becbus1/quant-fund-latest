@@ -9,7 +9,7 @@ from typing import Deque, Dict
 from shared.schemas import Side
 
 ROLLING_WINDOW = 120
-MIN_OBSERVATIONS = 20
+MIN_OBSERVATIONS = 3
 
 _ofi_buffers: Dict[str, Deque[float]] = {}
 
