@@ -210,4 +210,28 @@ class PaperExecutor:
 
         return position
 
-    # === execute_exit and check_exits remain unchanged ===
+    # ============================================================
+    # 🔹 RESTORED: exit logic (unchanged)
+    # ============================================================
+    def check_exits(self, symbol: str, current_price: float) -> Optional[dict]:
+        position = self._positions.get(symbol)
+        if not position:
+            return None
+
+        now = datetime.utcnow()
+
+        if position["time_stop_at"] and now >= position["time_stop_at"]:
+            return self.execute_exit(symbol, current_price, "time_stop")
+
+        if position["side"] == Side.BUY:
+            if current_price >= position["take_profit_price"]:
+                return self.execute_exit(symbol, current_price, "take_profit")
+            if current_price <= position["stop_loss_price"]:
+                return self.execute_exit(symbol, current_price, "stop_loss")
+        else:
+            if current_price <= position["take_profit_price"]:
+                return self.execute_exit(symbol, current_price, "take_profit")
+            if current_price >= position["stop_loss_price"]:
+                return self.execute_exit(symbol, current_price, "stop_loss")
+
+        return None
