@@ -70,7 +70,7 @@ class PaperExecutor:
             return "high"
 
     # ============================================================
-    # 🔹 NEW: edge_registry lookup (SURVIVORS ONLY)
+    # 🔹 edge_registry lookup (SURVIVORS ONLY)
     # ============================================================
     def _get_active_edge(
         self,
@@ -97,6 +97,9 @@ class PaperExecutor:
         rows = response.data or []
         return rows[0] if rows else None
 
+    # ============================================================
+    # 🔹 ENTRY
+    # ============================================================
     def execute_entry(
         self,
         symbol: str,
@@ -111,9 +114,6 @@ class PaperExecutor:
             logger.warning(f"Already have position in {symbol}, rejecting entry")
             return None
 
-        # ========================================================
-        # 🔹 Bucketization (must match ml_training_data view)
-        # ========================================================
         z_bucket = math.floor(abs(z_score) * 2) / 2
         vol_bucket = self._get_volatility_bucket(symbol)
 
@@ -125,20 +125,7 @@ class PaperExecutor:
             vol_bucket=vol_bucket,
         )
 
-        if edge is None:
-            logger.info(
-                f"Exploration trade: no edge for "
-                f"{symbol} z={z_bucket:.2f} vol={vol_bucket} side={side.value}"
-            )
-        else:
-            logger.info(
-                f"Edge confirmed: "
-                f"{symbol} z={z_bucket:.2f} vol={vol_bucket} side={side.value} "
-                f"(lb95={edge['lb95']:.2%}, n={edge['n']})"
-            )
-
         confidence = compute_confidence(z_score)
-
         signal_id = uuid.uuid4()
 
         insert_row(
@@ -163,22 +150,22 @@ class PaperExecutor:
         slippage_mult = 1 + (self.slippage_bps / 10000)
         fill_price = price * slippage_mult if side == Side.BUY else price / slippage_mult
 
-        effective_notional = self.notional_usdt * confidence
-        quantity = effective_notional / fill_price
-
-        notional = fill_price * quantity
-        fee = notional * (self.fees_bps / 10000)
+        quantity = (self.notional_usdt * confidence) / fill_price
+        fee = fill_price * quantity * (self.fees_bps / 10000)
 
         now = datetime.utcnow()
 
-        if side == Side.BUY:
-            take_profit_price = fill_price * (1 + take_profit_bps / 10000)
-            stop_loss_price = fill_price * (1 - stop_loss_bps / 10000)
-        else:
-            take_profit_price = fill_price * (1 - take_profit_bps / 10000)
-            stop_loss_price = fill_price * (1 + stop_loss_bps / 10000)
+        take_profit_price = (
+            fill_price * (1 + take_profit_bps / 10000)
+            if side == Side.BUY
+            else fill_price * (1 - take_profit_bps / 10000)
+        )
 
-        time_stop_at = now + timedelta(seconds=self.time_stop_sec)
+        stop_loss_price = (
+            fill_price * (1 - stop_loss_bps / 10000)
+            if side == Side.BUY
+            else fill_price * (1 + stop_loss_bps / 10000)
+        )
 
         position = {
             "signal_id": str(signal_id),
@@ -192,26 +179,70 @@ class PaperExecutor:
             "side": side,
             "quantity": quantity,
             "entry_price": fill_price,
-            "notional": notional,
+            "notional": fill_price * quantity,
             "entry_time": now,
             "strategy_name": strategy_name,
             "take_profit_price": take_profit_price,
             "stop_loss_price": stop_loss_price,
-            "time_stop_at": time_stop_at,
+            "time_stop_at": now + timedelta(seconds=self.time_stop_sec),
             "fees_paid": fee,
         }
 
         self._positions[symbol] = position
-
-        logger.info(
-            f"Entry fill: {side.value} {quantity:.6f} {symbol} @ {fill_price:.4f} "
-            f"(confidence={confidence:.2f})"
-        )
-
         return position
 
     # ============================================================
-    # 🔹 RESTORED: exit logic (unchanged)
+    # 🔹 EXIT (RESTORED)
+    # ============================================================
+    def execute_exit(
+        self,
+        symbol: str,
+        price: float,
+        exit_reason: str,
+    ) -> Optional[dict]:
+        position = self._positions.get(symbol)
+        if not position:
+            return None
+
+        side = position["side"]
+        qty = position["quantity"]
+        entry_price = position["entry_price"]
+
+        slippage_mult = 1 + (self.slippage_bps / 10000)
+        exit_price = price * slippage_mult if side == Side.SELL else price / slippage_mult
+
+        gross_pnl = (
+            (exit_price - entry_price) * qty
+            if side == Side.BUY
+            else (entry_price - exit_price) * qty
+        )
+
+        fee = exit_price * qty * (self.fees_bps / 10000)
+        net_pnl = gross_pnl - position["fees_paid"] - fee
+        pnl_bps = (net_pnl / position["notional"]) * 10000
+
+        insert_row(
+            "ml_training_events",
+            {
+                "signal_id": position["signal_id"],
+                "symbol": symbol,
+                "strategy": position["strategy_name"],
+                "signal_timestamp": position["entry_time"].isoformat(),
+                "features": position["features"],
+                "z_score": position["z_score"],
+                "net_pnl": net_pnl,
+                "pnl_bps": pnl_bps,
+                "win": net_pnl > 0,
+                "hold_time_sec": (datetime.utcnow() - position["entry_time"]).total_seconds(),
+                "exit_reason": exit_reason,
+            },
+        )
+
+        del self._positions[symbol]
+        return {"symbol": symbol, "net_pnl": net_pnl, "pnl_bps": pnl_bps}
+
+    # ============================================================
+    # 🔹 CHECK EXITS (RESTORED)
     # ============================================================
     def check_exits(self, symbol: str, current_price: float) -> Optional[dict]:
         position = self._positions.get(symbol)
