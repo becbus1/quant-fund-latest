@@ -43,7 +43,7 @@ class PaperExecutor:
         return list(self._positions.values())
 
     # ============================================================
-    # 🔹 NEW: volatility regime bucket (simple + stable)
+    # 🔹 Volatility regime bucket (unchanged)
     # ============================================================
     def _get_volatility_bucket(self, symbol: str) -> str:
         response = (
@@ -70,66 +70,32 @@ class PaperExecutor:
             return "high"
 
     # ============================================================
-    # 🔹 NEW: Bayesian lower bound (Wilson score, 95%)
+    # 🔹 NEW: edge_registry lookup (SURVIVORS ONLY)
     # ============================================================
-    def _bayesian_lower_bound(self, wins: int, total: int, z: float = 1.96) -> float:
-        if total == 0:
-            return 0.0
-
-        phat = wins / total
-        denom = 1 + z**2 / total
-        centre = phat + z**2 / (2 * total)
-        margin = z * math.sqrt(
-            (phat * (1 - phat) + z**2 / (4 * total)) / total
-        )
-        return (centre - margin) / denom
-
-    # ============================================================
-    # 🔹 NEW: empirical stats lookup (with buckets)
-    # ============================================================
-    def _get_edge_stats(
+    def _get_active_edge(
         self,
         symbol: str,
         strategy: str,
+        side: str,
         z_bucket: float,
         vol_bucket: str,
     ) -> Optional[dict]:
         response = (
             supabase
-            .table("ml_training_data")
-            .select("label")
+            .table("edge_registry")
+            .select("*")
             .eq("symbol", symbol)
             .eq("strategy", strategy)
+            .eq("side", side)
             .eq("z_score_bucket", z_bucket)
             .eq("volatility_bucket", vol_bucket)
+            .eq("status", "active")
+            .limit(1)
             .execute()
         )
 
         rows = response.data or []
-        total = len(rows)
-
-        if total < 20:
-            return None  # exploration mode
-
-        wins = sum(r["label"] for r in rows)
-        lower_bound = self._bayesian_lower_bound(wins, total)
-
-        return {
-            "total": total,
-            "wins": wins,
-            "lower_bound": lower_bound,
-        }
-
-    # ============================================================
-    # 🔹 NEW: exploration decay threshold
-    # ============================================================
-    def _min_required_edge(self, sample_size: int) -> float:
-        """
-        Exploration decay:
-        - Early → permissive
-        - Later → stricter
-        """
-        return 0.48 + min(0.06, math.log10(sample_size + 1) * 0.02)
+        return rows[0] if rows else None
 
     def execute_entry(
         self,
@@ -146,26 +112,30 @@ class PaperExecutor:
             return None
 
         # ========================================================
-        # 🔹 NEW: bucketization
+        # 🔹 Bucketization (must match ml_training_data view)
         # ========================================================
         z_bucket = math.floor(abs(z_score) * 2) / 2
         vol_bucket = self._get_volatility_bucket(symbol)
 
-        stats = self._get_edge_stats(
+        edge = self._get_active_edge(
             symbol=symbol,
             strategy=strategy_name,
+            side=side.value.upper(),
             z_bucket=z_bucket,
             vol_bucket=vol_bucket,
         )
 
-        if stats is not None:
-            min_edge = self._min_required_edge(stats["total"])
-            if stats["lower_bound"] < min_edge:
-                logger.info(
-                    f"Rejected {symbol} z={z_bucket:.2f} vol={vol_bucket} "
-                    f"(LB={stats['lower_bound']:.2%}, req={min_edge:.2%})"
-                )
-                return None
+        if edge is None:
+            logger.info(
+                f"Exploration trade: no edge for "
+                f"{symbol} z={z_bucket:.2f} vol={vol_bucket} side={side.value}"
+            )
+        else:
+            logger.info(
+                f"Edge confirmed: "
+                f"{symbol} z={z_bucket:.2f} vol={vol_bucket} side={side.value} "
+                f"(lb95={edge['lb95']:.2%}, n={edge['n']})"
+            )
 
         confidence = compute_confidence(z_score)
 
