@@ -5,11 +5,12 @@ Simulates order fills with configurable fees and slippage.
 
 import logging
 import uuid
+import math
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
 from trader.app.common.config import get_config
-from trader.app.common.supabase_client import insert_row
+from trader.app.common.supabase_client import insert_row, supabase
 from shared.schemas import Side
 
 # ✅ NEW: edge computation imports
@@ -41,6 +42,25 @@ class PaperExecutor:
     def get_all_position_snapshots(self) -> List[dict]:
         return list(self._positions.values())
 
+    # 🔹 NEW: empirical win-rate lookup
+    def _get_win_rate(self, symbol: str, strategy: str, z_bucket: float) -> Optional[float]:
+        response = (
+            supabase
+            .table("ml_training_data")
+            .select("label")
+            .eq("symbol", symbol)
+            .eq("strategy", strategy)
+            .eq("z_score_bucket", z_bucket)
+            .execute()
+        )
+
+        rows = response.data or []
+        if len(rows) < 30:
+            return None  # exploration mode
+
+        wins = sum(r["label"] for r in rows)
+        return wins / len(rows)
+
     def execute_entry(
         self,
         symbol: str,
@@ -53,6 +73,18 @@ class PaperExecutor:
     ) -> Optional[dict]:
         if self.has_position(symbol):
             logger.warning(f"Already have position in {symbol}, rejecting entry")
+            return None
+
+        # 🔹 NEW: z-score bucket
+        z_bucket = math.floor(abs(z_score) * 2) / 2
+
+        # 🔹 NEW: empirical win-rate gate
+        win_rate = self._get_win_rate(symbol, strategy_name, z_bucket)
+        if win_rate is not None and win_rate < 0.52:
+            logger.info(
+                f"Rejected entry {symbol} z_bucket={z_bucket:.2f} "
+                f"(win_rate={win_rate:.2%})"
+            )
             return None
 
         confidence = compute_confidence(z_score)
@@ -174,7 +206,6 @@ class PaperExecutor:
             },
         )
 
-        # ✅ ML TRAINING EVENT INSERT (THIS IS THE KEY LINE YOU WERE MISSING)
         insert_row(
             "ml_training_events",
             {
